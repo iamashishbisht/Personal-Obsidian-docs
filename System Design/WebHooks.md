@@ -160,3 +160,20 @@ There are two common solutions:
 - **Fetch the latest state.** Treat the webhook as a notification that something changed, then fetch the current state of the resource from the source system. The order of notifications no longer matters.
 
 For payments, the second approach is common: before fulfilling an order, confirm its status through the provider's API.
+
+# Security and Webhook Signatures
+
+Webhook endpoints are publicly accessible. Without verification, anyone who finds your endpoint could send a fake `payment_succeeded` event and get free access.
+
+So your server needs a way to verify that a request actually came from the trusted provider. The common approach is **request signing**:
+
+1. The provider uses a shared secret to compute a cryptographic signature (usually an HMAC) over the webhook payload.
+2. It sends that signature with the request, in a header.
+3. Your server computes the expected signature with the same secret and compares the two.
+
+Two details matter:
+
+- **Verify the raw request body.** Parsing the JSON and serializing it again can change the bytes, and then the signature will not match.
+- **Check the signed timestamp.** Many providers sign a timestamp along with the body. Reject requests that are too old, such as more than 5 minutes. That protects against replay attacks, where an attacker captures a valid webhook and sends it again later.
+
+In real code, use the provider's official library when one exists, because signature formats differ between providers.
