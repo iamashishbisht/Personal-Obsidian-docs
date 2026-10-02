@@ -116,3 +116,19 @@ The correct approach isn't to completely remove the database constraint—**you 
 |**Idempotent Upsert** _(Recommended)_|Use `INSERT ... ON CONFLICT DO NOTHING` (PostgreSQL) or `INSERT IGNORE` (MySQL).|⚡ **Best**: The DB handles it natively in a single round-trip without throwing an application exception.|
 |**Try-Catch Block**|Wrap the insert in a `try/catch`. Catch the specific _UniqueConstraintViolation_ exception, log a warning, and safely acknowledge (`ACK`) the message.|🛠️ **Good**: Prevents the consumer from crashing or choking the queue.|
 |**Distributed Cache Check**|Check a fast, in-memory store like **Redis** for the message ID before hitting the DB.|🏎️ **Fastest**: Stops the duplicate before it ever touches your main relational database.|
+# Return Quickly, Process Asynchronously
+
+Another common mistake is doing too much work inside the webhook request itself.
+
+Imagine your server receives a payment webhook. The handler updates the database, sends an email, generates an invoice, updates analytics, and calls another service, all before responding. If that takes too long, the provider hits its timeout and assumes delivery failed. Then it retries, and you might process the event again while the first request is still running.
+
+A more reliable pattern keeps the webhook endpoint lightweight:
+
+1. Validate the request.
+2. Store the event durably, usually in a database or queue.
+3. Return a success response as quickly as possible.
+
+Background workers then handle the expensive processing asynchronously. This separates webhook delivery from business logic, so slow downstream systems cannot delay the acknowledgment.
+
+The order matters. Do not return `200 OK` before the event is safely stored. If your process crashes after returning success but before saving, the provider has no reason to retry, and the event is lost.
+
