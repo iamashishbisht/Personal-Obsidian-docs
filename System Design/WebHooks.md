@@ -136,6 +136,8 @@ The order matters. Do not return `200 OK` before the event is safely stored. If 
 
 At scale, a common webhook consumer architecture looks like this. The endpoint receives the request, validates it, writes the event to a durable queue, and immediately returns success. A pool of workers consumes events from the queue and performs the actual business logic.
 
+![[Pasted image 20261002123506.png]]
+
 This gives three advantages:
 
 - **Webhook traffic and processing are decoupled.** If a provider suddenly sends 100,000 events, the queue absorbs the spike.
@@ -145,3 +147,4 @@ This gives three advantages:
 The endpoint stays fast, while the queue acts as a buffer between external traffic and internal processing.
 
 One detail to get right: if the endpoint saves the event to a database and then sends it to a separate queue as two independent writes, a crash between them can drop the event. Either commit both together, often with an `outbox` table that a relay forwards to the queue, or let workers read directly from the events table.
+
