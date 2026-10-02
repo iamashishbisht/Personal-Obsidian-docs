@@ -180,3 +180,11 @@ Two details matter:
 
 In real code, use the provider's official library when one exists, because signature formats differ between providers.
 
+# Webhook Endpoint Design
+
+A webhook endpoint should stay simple. Verify the request, validate the event, store it durably, and return a response quickly. Avoid running complex business logic directly inside the request.
+
+**HTTP status codes matter.** A success response tells the sender the event was accepted. A server error usually signals that it should retry. A permanent client error may indicate that retrying will not help.
+
+The exact behavior depends on the provider, so retry semantics should be clearly defined on both sides.
+
