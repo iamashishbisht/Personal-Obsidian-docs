@@ -93,7 +93,7 @@ When a duplicate arrives, return success, because the original was already accep
 
 This does not create true exactly-once delivery. It makes repeated deliveries safe, which is the practical goal.
 
-> [!Question] Having a primary key constraint without handling in code in consumer can result in not having duplicate entries but is that correct apporcha to have db throwing error directly?
+> [!Question] Having a primary key constraint without handling in code in consumer can result in not having duplicate entries, but is that correct approach to have db throwing error directly?
 
 No, relying solely on a database unique or primary key constraint to throw errors is generally **not considered a best-practice approach** for production systems.
 
@@ -116,10 +116,3 @@ The correct approach isn't to completely remove the database constraint—**you 
 |**Idempotent Upsert** _(Recommended)_|Use `INSERT ... ON CONFLICT DO NOTHING` (PostgreSQL) or `INSERT IGNORE` (MySQL).|⚡ **Best**: The DB handles it natively in a single round-trip without throwing an application exception.|
 |**Try-Catch Block**|Wrap the insert in a `try/catch`. Catch the specific _UniqueConstraintViolation_ exception, log a warning, and safely acknowledge (`ACK`) the message.|🛠️ **Good**: Prevents the consumer from crashing or choking the queue.|
 |**Distributed Cache Check**|Check a fast, in-memory store like **Redis** for the message ID before hitting the DB.|🏎️ **Fastest**: Stops the duplicate before it ever touches your main relational database.|
-
-If you would like to fix this in your system, let me know:
-
-- What **programming language** or framework your consumer uses
-- What **database** you are using (e.g., PostgreSQL, MySQL, MongoDB)
-
-I can provide a **clean code snippet** showing exactly how to handle or swallow these duplicate errors gracefully.
