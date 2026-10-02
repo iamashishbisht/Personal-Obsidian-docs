@@ -188,3 +188,40 @@ A webhook endpoint should stay simple. Verify the request, validate the event, s
 
 The exact behavior depends on the provider, so retry semantics should be clearly defined on both sides.
 
+# Designing a Webhook Provider
+
+So far, the focus has been on consuming webhooks. Now look at the other side: sending them.
+
+Suppose your platform delivers webhooks to thousands of customers. When an event occurs, the service that created it should usually not send the webhook directly. Instead:
+
+1. Write the event to a durable queue or event stream.
+2. A **webhook delivery service** reads it, finds the subscribed endpoints, and sends the requests.
+3. The delivery service tracks each attempt: the response, the retry count, and the next retry time.
+4. After repeated failures, the event moves to a dead-letter queue.
+![[Pasted image 20261002124648.png]]
+
+# Handling Slow or Broken Consumers
+
+If you operate a webhook provider, some customer endpoints will be slow, unreliable, or completely down.
+
+One broken destination should not affect everyone else. So isolate deliveries per endpoint, each with its own:
+
+- Retry state
+- Rate limits
+- Timeouts
+
+You may also need **concurrency limits**, so you do not overwhelm a customer with too many requests at once. This matters most when replaying a large backlog after an outage: a customer that was down for an hour should receive the backlog at a pace it can handle, not all at once.
+
+#  When to Use Webhooks
+
+Webhooks are a strong choice when one system needs to notify another that an event occurred. Common examples:
+
+- Payments
+- Source control events
+- Order updates
+- Email delivery
+- Identity systems
+- CI pipelines
+- Third-party integrations
+
+They work especially well for discrete events, where a permanent connection is unnecessary.
