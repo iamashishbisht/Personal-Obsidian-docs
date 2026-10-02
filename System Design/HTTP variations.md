@@ -1,6 +1,6 @@
 
 
-> [!NOTE] Key Properties of TCP
+> [!INFO] Key Properties of TCP
 > 
 
 - **Connection-Oriented:** TCP sets up a connection using a three-way handshake (SYN, SYN-ACK, ACK) before sending any actual data.
@@ -28,7 +28,7 @@ Flow Control vs. Congestion Control in TCP
     - When it detects signs of congestion, such as packet loss or other congestion signals, it reduces the sending rate.
 
 
-> [!NOTE] Key Properties of UCP
+> [!INFO] Key Properties of UDP
 
 UDP, or User Datagram Protocol is ==a fast, connectionless communication protocol used to send data packets (called datagrams) across a network==.
 
