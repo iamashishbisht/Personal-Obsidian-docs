@@ -148,3 +148,15 @@ The endpoint stays fast, while the queue acts as a buffer between external traff
 
 One detail to get right: if the endpoint saves the event to a database and then sends it to a separate queue as two independent writes, a crash between them can drop the event. Either commit both together, often with an `outbox` table that a relay forwards to the queue, or let workers read directly from the events table.
 
+# Webhook Ordering
+
+Another subtle problem is event ordering.
+
+Suppose a system sends two events. The first says an order was created. The second says the order was cancelled. You might assume they arrive in that order, but distributed systems rarely give you that guarantee. The first webhook could fail and be retried later, while the second succeeds immediately. Your application receives the cancellation before the creation.
+
+There are two common solutions:
+
+- **Sequence or version numbers.** Each event carries the version of the resource it describes. If the system has already processed version 5 and later receives version 4, it ignores the stale event.
+- **Fetch the latest state.** Treat the webhook as a notification that something changed, then fetch the current state of the resource from the source system. The order of notifications no longer matters.
+
+For payments, the second approach is common: before fulfilling an order, confirm its status through the provider's API.
