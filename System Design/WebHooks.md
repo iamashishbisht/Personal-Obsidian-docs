@@ -73,4 +73,20 @@ How At-Least-Once Delivery Works:
 - **The Tradeoff**: You prevent data loss completely, but you must deal with duplicate data.
 
 
+# Idempotency
 
+The standard solution to duplicate delivery is idempotency: processing the same event twice has the same effect as processing it once.
+
+Every webhook event should have a unique event ID. When your application receives an event:
+
+1. Check whether that event ID has already been processed.
+2. If not, process the event and record the ID.
+3. If it has, recognize the duplicate and ignore it.
+
+Store processed IDs in reliable storage with a unique constraint, so two concurrent deliveries of the same event cannot both slip through:
+
+![[Pasted image 20261002121659.png]]
+
+When a duplicate arrives, return success, because the original was already accepted:
+
+This does not create true exactly-once delivery. It makes repeated deliveries safe, which is the practical goal.
