@@ -875,3 +875,975 @@ public class TokenBucket {
 
 https://github.com/ashishps1/awesome-system-design-resources/blob/main/implementations/java/rate_limiting/LeakyBucket.java
 
+
+> [!Question] Explain in detail on fixed window, sliding window log and sliding window counter rate limiting algorithm.
+
+Assume:
+
+> **Rate limit = 5 requests per 10 seconds per user**
+
+So for user `Ashish`, the server should allow at most roughly 5 requests in any 10-second period.
+
+The three algorithms differ mainly in **how they define and calculate that 10-second window**:
+
+1. **Fixed Window** → divide time into fixed boxes.
+2. **Sliding Window Log** → remember the exact timestamp of every request.
+3. **Sliding Window Counter** → remember counts of recent fixed windows and mathematically estimate the current sliding window.
+
+---
+
+# 1. Fixed Window Counter
+
+This is the simplest algorithm.
+
+Imagine time is divided into boxes:
+
+```
+10:00:00 ───────── 10:00:10 ───────── 10:00:20
+       Window 1             Window 2
+       max = 5              max = 5
+```
+
+For every user, maintain:
+
+```
+user = Ashish
+
+current window = 10:00:00 - 10:00:10
+request count = 0
+limit = 5
+```
+
+Every request increments the counter.
+
+### Example
+
+```
+10:00:01  request → count = 1 ✅
+10:00:02  request → count = 2 ✅
+10:00:03  request → count = 3 ✅
+10:00:04  request → count = 4 ✅
+10:00:05  request → count = 5 ✅
+10:00:06  request → count = 6 ❌
+```
+
+At `10:00:10`, the window expires.
+
+Then:
+
+```
+10:00:10 - 10:00:20
+
+count = 0
+```
+
+And the user gets another 5 requests.
+
+---
+
+## The big problem with Fixed Window
+
+There is a **boundary problem**.
+
+Suppose:
+
+```
+Window 1
+09:59:50 ───────── 10:00:00
+
+Window 2
+10:00:00 ───────── 10:00:10
+```
+
+User sends:
+
+```
+09:59:59 → 5 requests
+```
+
+All 5 are allowed.
+
+Then:
+
+```
+10:00:01 → 5 requests
+```
+
+Those 5 are also allowed.
+
+So:
+
+```
+09:59:59
+09:59:59
+09:59:59
+09:59:59
+09:59:59
+       ↓
+10:00:01
+10:00:01
+10:00:01
+10:00:01
+10:00:01
+```
+
+That's **10 requests within roughly 2 seconds**, even though the configured limit is:
+
+```
+5 requests / 10 seconds
+```
+
+This is called the **boundary/burst problem**.
+
+---
+
+# 2. Sliding Window Log
+
+This tries to solve the boundary problem.
+
+Instead of saying:
+
+> "Which fixed window are we in?"
+
+we say:
+
+> **"Look at the last 10 seconds from this exact moment."**
+
+For every user, we store the timestamp of each request.
+
+Example:
+
+```
+Ashish:
+
+10:00:01
+10:00:03
+10:00:04
+10:00:07
+10:00:09
+```
+
+Now another request arrives at:
+
+```
+10:00:09
+```
+
+We look back 10 seconds:
+
+```
+10:00:09 - 10 seconds
+       ↓
+09:59:59
+```
+
+All timestamps between:
+
+```
+09:59:59 → 10:00:09
+```
+
+are counted.
+
+There are already 5.
+
+Therefore:
+
+```
+new request ❌
+```
+
+---
+
+## Now look at what happens at 10:00:12
+
+We have:
+
+```
+10:00:01
+10:00:03
+10:00:04
+10:00:07
+10:00:09
+```
+
+Current time:
+
+```
+10:00:12
+```
+
+Sliding window:
+
+```
+10:00:02 ───────── 10:00:12
+```
+
+The request at:
+
+```
+10:00:01
+```
+
+is now outside the window.
+
+So:
+
+```
+10:00:03
+10:00:04
+10:00:07
+10:00:09
+```
+
+= 4 requests.
+
+Therefore:
+
+```
+new request → count becomes 5 ✅
+```
+
+---
+
+# Why is it called "Sliding Window"?
+
+Because the window moves continuously with time.
+
+At:
+
+```
+10:00:10
+
+window:
+10:00:00 ───────── 10:00:10
+```
+
+At:
+
+```
+10:00:11
+
+window:
+10:00:01 ───────── 10:00:11
+```
+
+At:
+
+```
+10:00:12
+
+window:
+10:00:02 ───────── 10:00:12
+```
+
+At:
+
+```
+10:00:13
+
+window:
+10:00:03 ───────── 10:00:13
+```
+
+The window isn't tied to `10:00:00`, `10:00:10`, etc.
+
+It moves with every request/current time.
+
+---
+
+# The problem with Sliding Window Log
+
+It is accurate, but it can consume a lot of memory.
+
+Suppose:
+
+```
+1 million users
+```
+
+and each user makes:
+
+```
+100 requests within the window
+```
+
+You potentially need to store:
+
+```
+1 million × 100
+= 100 million timestamps
+```
+
+That's a lot of data.
+
+And every request may involve:
+
+1. Adding a timestamp
+2. Removing expired timestamps
+3. Counting timestamps
+
+So this is accurate but potentially expensive.
+
+---
+
+# 3. Sliding Window Counter
+
+This tries to get the **benefit of sliding window** without storing every individual request timestamp.
+
+Instead of storing:
+
+```
+request 1 → 10:00:01
+request 2 → 10:00:03
+request 3 → 10:00:04
+request 4 → 10:00:07
+request 5 → 10:00:09
+```
+
+we store **counts of fixed windows**.
+
+For example:
+
+```
+10-second rate limit
+```
+
+We might divide it into smaller fixed windows.
+
+Or, conceptually, maintain:
+
+```
+Previous window count
+Current window count
+```
+
+Suppose:
+
+```
+Previous window:
+10:00:00 - 10:00:10
+requests = 4
+
+Current window:
+10:00:10 - 10:00:20
+requests = 3
+```
+
+Now suppose current time is:
+
+```
+10:00:13
+```
+
+The current 10-second sliding window is:
+
+```
+10:00:03 ───────── 10:00:13
+```
+
+Notice something important:
+
+The current sliding window contains:
+
+```
+part of previous window
++
+part of current window
+```
+
+We therefore estimate how much of the previous window should count.
+
+---
+
+# The Sliding Window Counter formula
+
+A commonly used approximation is:
+
+```
+estimated count
+=
+previous window count × previous-window overlap
++
+current window count
+```
+
+More precisely:
+
+```
+estimated count =
+previous_count × (1 - elapsed_fraction)
++ current_count
+```
+
+Where:
+
+```
+elapsed_fraction =
+elapsed time in current fixed window
+------------------------------------
+length of fixed window
+```
+
+---
+
+# Let's calculate it
+
+Suppose:
+
+```
+Limit = 5 requests / 10 seconds
+```
+
+And:
+
+```
+Previous window:
+10:00:00 - 10:00:10
+count = 4
+
+Current window:
+10:00:10 - 10:00:20
+count = 3
+```
+
+Current time:
+
+```
+10:00:13
+```
+
+So 3 seconds have elapsed in the current window.
+
+Therefore:
+
+```
+elapsed fraction = 3 / 10
+                 = 0.3
+```
+
+The previous window contributes approximately:
+
+```
+4 × (1 - 0.3)
+= 4 × 0.7
+= 2.8
+```
+
+Current count:
+
+```
+3
+```
+
+Therefore:
+
+```
+estimated count = 2.8 + 3
+                = 5.8
+```
+
+Since:
+
+```
+5.8 > 5
+```
+
+we reject the request.
+
+---
+
+# Why are we multiplying the previous count?
+
+This is the key idea.
+
+Imagine:
+
+```
+Previous window
+10:00:00                    10:00:10
+     |--------------------------|
+              4 requests
+```
+
+Current time:
+
+```
+10:00:13
+```
+
+The sliding window is:
+
+```
+10:00:03                    10:00:13
+     |--------------------------|
+```
+
+Only this portion of the previous window matters:
+
+```
+10:00:03 ─────── 10:00:10
+```
+
+That's roughly:
+
+```
+70%
+```
+
+of the previous window.
+
+So we estimate:
+
+```
+70% of previous requests
+```
+
+instead of storing exactly which timestamps those requests had.
+
+---
+
+# Very important: Sliding Window Counter is an approximation
+
+This is something people often miss.
+
+Sliding Window Log:
+
+```
+exact
+```
+
+because it knows:
+
+```
+10:00:01
+10:00:03
+10:00:04
+...
+```
+
+Sliding Window Counter:
+
+```
+approximation
+```
+
+because it only knows:
+
+```
+previous window = 4
+current window = 3
+```
+
+It doesn't know exactly when those 4 previous requests occurred.
+
+Therefore it estimates.
+
+---
+
+# Compare all three
+
+Suppose:
+
+```
+Limit = 5 requests / 10 seconds
+```
+
+|Algorithm|Stores|Accuracy|Memory|Boundary problem|
+|---|---|---|---|---|
+|Fixed Window|Counter|Low/Moderate|Very low|Yes|
+|Sliding Window Log|Every timestamp|Very high/exact|High|No|
+|Sliding Window Counter|Window counts|Approximate|Low|Much better|
+
+---
+
+# Visual mental model
+
+Remember them like this.
+
+### Fixed Window
+
+Think of **calendar boxes**:
+
+```
+|---------|---------|---------|
+ Window 1  Window 2  Window 3
+    5          5          5
+```
+
+The box doesn't move.
+
+---
+
+### Sliding Window Log
+
+Think of a **moving ruler** over individual requests:
+
+```
+requests:
+
+  •    • •       •     •
+  |--------------------|
+          last 10 sec
+```
+
+Move the ruler:
+
+```
+    |--------------------|
+```
+
+and count the dots inside it.
+
+Very accurate, but expensive.
+
+---
+
+### Sliding Window Counter
+
+Think of **two buckets of numbers**:
+
+```
+Previous window       Current window
+       4                    3
+       ↓                    ↓
+       └────── estimate ────┘
+```
+
+Instead of remembering every dot, remember:
+
+```
+Previous = 4
+Current  = 3
+```
+
+Then estimate how much of the previous bucket belongs to the moving window.
+
+---
+
+# Now let's connect this to your previous Token Bucket question
+
+These algorithms are **different concepts** from Token Bucket and Leaky Bucket.
+
+You can think of rate limiting algorithms in two broad styles:
+
+### Counter/window-based
+
+```
+Fixed Window
+Sliding Window Log
+Sliding Window Counter
+```
+
+They ask:
+
+> **"How many requests have happened recently?"**
+
+---
+
+### Traffic-shaping/token-based
+
+```
+Token Bucket
+Leaky Bucket
+```
+
+They ask more about:
+
+> **"Can this request pass right now based on available capacity/tokens?"**
+
+Token Bucket, in particular, allows controlled bursts because tokens can accumulate.
+
+---
+
+# One important correction to a common misunderstanding
+
+The algorithm itself doesn't inherently mean:
+
+```
+ONE bucket for the entire system
+```
+
+or:
+
+```
+ONE bucket per user
+```
+
+That's a **policy/design decision**.
+
+For example, you could have:
+
+```
+User A → 5 req / 10 sec
+User B → 5 req / 10 sec
+User C → 5 req / 10 sec
+```
+
+with separate counters/windows.
+
+You could also have:
+
+```
+ALL USERS → 10,000 req / sec
+```
+
+with one global limiter.
+
+Or both:
+
+```
+Global:
+10,000 req/sec
+
+AND
+
+Per user:
+5 req/sec
+```
+
+So in a real API gateway you might have **multiple rate limits simultaneously**.
+
+For example:
+
+```
+                   API Gateway
+                       │
+          ┌────────────┴────────────┐
+          ↓                         ↓
+   Global limiter              User limiter
+   10,000 req/sec               5 req/sec
+          │                         │
+          └────────────┬────────────┘
+                       ↓
+                    Backend
+```
+
+That distinction is important when you move from learning the algorithms to designing a production rate limiter.
+
+
+
+> [!Question] I have leaky bucket lets say allowing 5 request per 10 sec and similarly we have fixed window size where a window is of 10 sec and allows 5 request max in that window, so isn't both same then?
+
+Yes — **if you describe Leaky Bucket only as “5 requests every 10 seconds,” it sounds identical to Fixed Window. But they are fundamentally different.**
+
+The key is **what happens to requests after the limit is reached**.
+
+### Fixed Window
+
+Configuration:
+
+```
+10-second window
+Maximum = 5 requests
+```
+
+Think:
+
+```
+10:00:00 ─────────────── 10:00:10
+       max 5 requests
+```
+
+Requests:
+
+```
+10:00:01  ✅
+10:00:02  ✅
+10:00:03  ✅
+10:00:04  ✅
+10:00:05  ✅
+10:00:06  ❌
+```
+
+The 6th request is simply **rejected**.
+
+Then at `10:00:10`, a **new window starts**:
+
+```
+10:00:10 ─────────────── 10:00:20
+       counter = 0
+```
+
+So you can get the boundary burst:
+
+```
+09:59:59 → 5 requests ✅
+10:00:01 → 5 requests ✅
+```
+
+That's potentially **10 requests in ~2 seconds**.
+
+---
+
+# Leaky Bucket is different
+
+Here's the important mental model:
+
+**Leaky Bucket doesn't normally mean "5 requests are allowed in every 10-second box."**
+
+Instead, imagine a bucket/queue:
+
+```
+             Requests
+          ↓   ↓   ↓   ↓
+        ┌─────────────┐
+        │             │
+        │   BUCKET    │
+        │             │
+        └──────┬──────┘
+               ↓
+          fixed rate
+               ↓
+          Server
+```
+
+Suppose the bucket drains at:
+
+```
+5 requests / 10 sec
+```
+
+That's:
+
+```
+1 request every 2 seconds
+```
+
+If 5 requests arrive quickly:
+
+```
+t=0       Request A ──┐
+t=0       Request B ──┤
+t=0       Request C ──┤ → bucket
+t=0       Request D ──┤
+t=0       Request E ──┘
+
+             ↓
+          queue them
+
+             ↓
+t=0      A → server
+t=2      B → server
+t=4      C → server
+t=6      D → server
+t=8      E → server
+```
+
+So **the requests aren't necessarily rejected just because 5 have arrived**.
+
+They can be **queued and released at a controlled rate**.
+
+---
+
+# This is the fundamental difference
+
+### Fixed Window
+
+> "Have I already received 5 requests during this 10-second window?"
+
+```
+5 requests → allow
+6th request → reject
+```
+
+### Leaky Bucket
+
+> "Can I put this request into my bucket/queue, and then I'll process requests at my fixed drain rate?"
+
+```
+requests arrive quickly
+        ↓
+     queue
+        ↓
+1 request every 2 sec
+        ↓
+     server
+```
+
+---
+
+## But there's an important terminology issue
+
+You will sometimes see tutorials describing **Leaky Bucket as a rate limiter that simply rejects requests when the bucket is full**, rather than queueing them.
+
+For example:
+
+```
+Bucket capacity = 5
+Drain rate = 1 request / 2 sec
+```
+
+If 5 requests are already waiting:
+
+```
+6th request → bucket full → reject
+```
+
+Even then, it is **still not the same as Fixed Window**, because the bucket's capacity and **continuous drain rate** determine admission.
+
+There are no hard 10-second reset boundaries.
+
+For example:
+
+```
+Fixed Window:
+
+10:00:00 ───────── 10:00:10
+     5 allowed
+
+10:00:10
+     RESET!
+     ↓
+     5 more allowed
+```
+
+Whereas Leaky Bucket is continuously draining:
+
+```
+10:00:00 → drain
+10:00:02 → drain
+10:00:04 → drain
+10:00:06 → drain
+10:00:08 → drain
+10:00:10 → drain
+...
+```
+
+**No reset happens at 10 seconds.**
+
+---
+
+### The easiest way to remember
+
+```
+FIXED WINDOW
+"Count requests inside this box."
+
+|--------------------|
+       max 5
+|--------------------|
+       RESET
+|--------------------|
+       max 5
+```
+
+```
+LEAKY BUCKET
+"Put requests in a queue and drain continuously."
+
+↓↓↓↓ requests
+┌───────────┐
+│ A B C D E │
+└─────┬─────┘
+      ↓
+      A       t=0
+      B       t=2
+      C       t=4
+      D       t=6
+      E       t=8
+```
+
+So **your observation is correct at the superficial level**: if both are described merely as _“5 requests per 10 seconds,”_ they look the same.
+
+But **Fixed Window controls the number admitted per fixed time box**, while **Leaky Bucket controls the rate at which queued traffic leaves the bucket**. That's the conceptual difference you should remember.
