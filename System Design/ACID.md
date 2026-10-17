@@ -94,7 +94,7 @@ The Takeaway
 
 While it is "ok" and correct that the other transaction committed its changes to the database, it is **not ok for _your_ active transaction to see them mid-flight**. A transaction must be an isolated, predictable block of logic. If it starts with one version of reality, it must finish with that same version of reality.
 
-> [Question] 4. lets say if there is repeatable read, then in this case it can lock the db rows for reading right, no commits will be possible?
+> [!Question] 4. lets say if there is repeatable read, then in this case it can lock the db rows for reading right, no commits will be possible?
 
 **It depends entirely on how your database is designed.**
 
@@ -126,3 +126,458 @@ Summary Comparison
 |**Traditional SQL Server / Informix**|**Yes** (Uses Shared Locks)|**No.** Other transactions must wait for your transaction to finish.|
 
 Are you building an application right now where you are worried about **concurrency performance**, or are you studying this for a **system design / database interview**? Let me know so I can tailor the next step!
+
+
+# Common Database Concurrency Problems — Explained with Two Transactions
+
+# Common Database Concurrency Problems
+
+## 1. Dirty Read
+
+**Definition:** A transaction reads data modified by another transaction before that transaction commits.
+
+**Initial data:**
+
+```
+Account balance = ₹1,000
+```
+
+**Execution flow:**
+
+```
+T1                                      T2
+-----------------------------------     --------------------------------
+                                        BEGIN TRANSACTION
+                                        UPDATE balance = ₹500
+                                        (Not committed yet)
+
+BEGIN TRANSACTION
+READ balance = ₹500
+(Reads T2's uncommitted value)
+
+                                        ROLLBACK
+                                        (Balance returns to ₹1,000)
+
+T1 has read ₹500, but that value
+was never committed.
+```
+
+**Why is this a problem?**
+
+T1 may make a decision based on data that is later rolled back.
+
+**Key point:** T1 reads an uncommitted change made by T2.
+
+**Prevention:** Use an isolation level that prevents dirty reads, such as `READ COMMITTED`.
+
+---
+
+## 2. Non-Repeatable Read
+
+**Definition:** A transaction reads the same row twice but gets different values because another transaction updates and commits that row between the reads.
+
+**Initial data:**
+
+```
+Employee ID = 101
+Salary = ₹50,000
+```
+
+**Execution flow:**
+
+```
+T1                                      T2
+-----------------------------------     --------------------------------
+BEGIN TRANSACTION
+
+READ salary = ₹50,000
+
+                                        BEGIN TRANSACTION
+                                        UPDATE salary = ₹60,000
+                                        COMMIT
+
+READ salary = ₹60,000
+
+T1 read the same row twice but
+received different values.
+```
+
+**Why is this a problem?**
+
+T1 may produce inconsistent calculations or reports because the value changed during its transaction.
+
+**Key point:** The same existing row returns different committed values.
+
+**Prevention:** Use `REPEATABLE READ` or `SERIALIZABLE`, or a suitable snapshot-based isolation mechanism.
+
+---
+
+## 3. Phantom Read
+
+**Definition:** A transaction executes the same query twice but gets a different set of matching rows because another transaction inserts or deletes matching rows.
+
+**Initial data:**
+
+```
+Orders table:
+
+Order ID | Status
+---------|---------
+1        | PENDING
+2        | PENDING
+
+Number of pending orders = 2
+```
+
+**Execution flow:**
+
+```
+T1                                      T2
+-----------------------------------     --------------------------------
+BEGIN TRANSACTION
+
+SELECT COUNT(*)
+WHERE status = 'PENDING'
+
+Result = 2
+
+                                        BEGIN TRANSACTION
+                                        INSERT order ID 3,
+                                        status = 'PENDING'
+                                        COMMIT
+
+SELECT COUNT(*)
+WHERE status = 'PENDING'
+
+Result = 3
+
+A new matching row appeared
+in T1's second query.
+```
+
+**Why is this a problem?**
+
+T1 may make a decision using an outdated count or result set.
+
+**Key point:** The set of rows matching the query changes.
+
+**Prevention:** Use `SERIALIZABLE` isolation or another suitable mechanism that guarantees a stable view of the query's results.
+
+**Difference from non-repeatable read:**
+
+- Non-repeatable read: The value of an existing row changes.
+    
+- Phantom read: The set of rows returned by a query changes.
+    
+
+---
+
+## 4. Lost Update
+
+**Definition:** Two transactions read the same old value, calculate new values independently, and one transaction overwrites the other's update.
+
+**Initial data:**
+
+```
+Account balance = ₹1,000
+
+T1 wants to deposit ₹100.
+T2 wants to deposit ₹200.
+
+Expected final balance = ₹1,300
+```
+
+**Execution flow:**
+
+```
+T1                                      T2
+-----------------------------------     --------------------------------
+READ balance = ₹1,000
+
+                                        READ balance = ₹1,000
+
+Calculate: 1000 + 100 = 1100
+
+                                        Calculate: 1000 + 200 = 1200
+
+UPDATE balance = ₹1,100
+COMMIT
+
+                                        UPDATE balance = ₹1,200
+                                        COMMIT
+
+Final balance = ₹1,200
+Expected balance = ₹1,300
+```
+
+**Why did this happen?**
+
+T2 used the old balance of ₹1,000 and overwrote T1's updated balance of ₹1,100.
+
+T1's deposit was effectively lost.
+
+**Key point:** Both transactions update the same data using stale values.
+
+**Prevention options:**
+
+1. Use an atomic database update:
+    
+
+```
+UPDATE account
+SET balance = balance + 100
+WHERE account_id = 1;
+```
+
+T2 performs the equivalent operation with `+ 200`. Both deposits are applied to the current database value.
+
+2. Use optimistic locking with JPA's `@Version`.
+    
+3. Use an appropriate pessimistic locking strategy when necessary.
+    
+
+---
+
+## 5. Write Skew
+
+**Definition:** Two transactions read overlapping data and update different rows based on what they read. Both transactions commit, but their combined changes violate a business rule.
+
+**Business rule:** At least one doctor must remain on call.
+
+**Initial data:**
+
+```
+Doctor A: ON_CALL = TRUE
+Doctor B: ON_CALL = TRUE
+
+Business rule:
+At least one doctor must remain on call.
+```
+
+**Execution flow:**
+
+```
+T1                                      T2
+-----------------------------------     --------------------------------
+READ Doctor A = ON
+READ Doctor B = ON
+
+                                        READ Doctor A = ON
+                                        READ Doctor B = ON
+
+T1 decides Doctor A can go off
+because Doctor B is still on.
+
+                                        T2 decides Doctor B can go off
+                                        because Doctor A is still on.
+
+UPDATE Doctor A = OFF
+COMMIT
+
+                                        UPDATE Doctor B = OFF
+                                        COMMIT
+```
+
+**Final data:**
+
+```
+Doctor A: OFF
+Doctor B: OFF
+
+Business rule violated:
+No doctor is on call.
+```
+
+**Why did this happen?**
+
+Both transactions checked the same initial state and made individually reasonable decisions. However, neither transaction knew that the other would also take a doctor off call.
+
+They updated different rows, so neither directly overwrote the other's update.
+
+**Key point:** Different rows are updated, but a shared business rule is violated.
+
+**Prevention options:**
+
+1. Use `SERIALIZABLE` isolation.
+    
+2. Lock a shared coordination row before checking the business rule.
+    
+3. Redesign the operation to enforce the rule through an appropriate database constraint or atomic operation.
+    
+
+**Important:** Snapshot isolation alone may permit write skew.
+
+---
+
+# Quick Revision Table
+
+|Problem|Main issue|Key difference|
+|---|---|---|
+|Dirty read|Reading uncommitted data|The writer may roll back|
+|Non-repeatable read|Same row gives different values|Existing row changes|
+|Phantom read|Query returns a different set of rows|Matching rows appear or disappear|
+|Lost update|One update overwrites another|Same data, stale value|
+|Write skew|Combined updates violate a rule|Different rows, shared business rule|
+
+# Isolation Level Quick Reference
+
+| Isolation level  | Dirty read | Non-repeatable read | Phantom read |
+| ---------------- | ---------- | ------------------- | ------------ |
+| READ UNCOMMITTED | Possible   | Possible            | Possible     |
+| READ COMMITTED   | Prevented  | Possible            | Possible     |
+| REPEATABLE READ  | Prevented  | Prevented           | Possible     |
+| SERIALIZABLE     | Prevented  | Prevented           | Prevented    |
+
+**Note:** These are the standard SQL isolation guarantees. Actual database behavior can differ with snapshot-based implementations.
+
+Lost updates and write skew need separate consideration; do not assume that choosing `REPEATABLE READ` automatically prevents both in every database.
+
+## Complete concurrency problems table
+
+The table below describes common SQL isolation guarantees and typical behavior. Lost-update and write-skew columns require the implementation caveat shown below.
+
+|Isolation level|Dirty read|Non-repeatable read|Phantom read|Lost update|Write skew|
+|---|---|---|---|---|---|
+|`READ UNCOMMITTED`|Possible|Possible|Possible|Possible|Possible|
+|`READ COMMITTED`|Prevented|Possible|Possible|Possible|Possible|
+|`REPEATABLE READ`|Prevented|Prevented|Possible*|Depends on implementation|Possible under snapshot isolation|
+|`SERIALIZABLE`|Prevented|Prevented|Prevented|Prevented when transactions follow the isolation rules|Prevented|
+
+* For standard SQL guarantees, `REPEATABLE READ` does not guarantee prevention of phantoms. A particular database may provide stronger behavior.
+
+Important: This is a conceptual guide, not a universal prediction for every database engine. For example, SQL Server's lock-based `REPEATABLE READ` differs from snapshot-based `REPEATABLE READ` in PostgreSQL. Also, applications can still introduce logical lost-update problems if they read and overwrite stale values outside a correctly protected transaction.
+
+## Memory Trick
+ 
+- Dirty read = Read uncommitted data.
+    
+- Non-repeatable read = Same row, different value.
+    
+- Phantom read = Same query, different set of rows.
+    
+- Lost update = One change overwrites another.
+    
+- Write skew = Two individually valid decisions break a shared rule.
+
+
+> [!Question] so why can't we use serializable directlly if it prevents in most of the scenarios?
+
+Because stronger consistency can come at the cost of throughput, latency, and transaction failures. We usually want the strongest guarantees that the business operation actually needs, not necessarily the strongest available guarantees for every operation.
+
+Let's understand with an example.
+
+## 1. What happens when we use SERIALIZABLE everywhere?
+
+Imagine your Spring Boot application has 100 users transferring money or reading account details at the same time.
+
+Two transactions are updating the same account:
+
+```
+Initial balance = ₹1,000
+
+T1                                      T2
+-----------------------------------     --------------------------------
+BEGIN SERIALIZABLE
+
+Read balance = ₹1,000
+
+                                        BEGIN SERIALIZABLE
+                                        Read balance = ₹1,000
+
+Update balance = ₹900
+
+                                        Wants to update balance = ₹800
+                                        Must wait, conflict, or abort
+                                        depending on database behavior.
+
+COMMIT
+
+                                        May continue or retry
+                                        after resolving the conflict.
+```
+
+The database must coordinate these transactions so that their combined execution is equivalent to a valid serial order.
+
+Notice that T2 cannot necessarily proceed immediately. Depending on the database, it might wait for T1, or one transaction might be aborted and need to retry.
+
+If many transactions conflict, this can cause:
+
+- More waiting: transactions hold locks or wait for conflicting operations to finish.
+    
+- Higher latency: API requests take longer to complete.
+    
+- Lower throughput: fewer transactions may finish per second when contention is high.
+    
+- More retries: some databases abort transactions to preserve serializability.
+    
+- Deadlocks: transactions can wait on each other's locks, requiring the database to abort one of them.
+    
+
+These are possible costs, not guarantees that every serializable transaction will be slow. If transactions access unrelated data, they may still run concurrently.
+
+## 2. Do all operations need SERIALIZABLE?
+
+Consider three examples.
+
+Example A: Read a user's profile
+
+```
+SELECT name, email
+FROM users
+WHERE user_id = 101;
+```
+
+`READ COMMITTED` is often sufficient. You generally don't need the strongest isolation level just to display a profile.
+
+Example B: Deposit money
+
+```
+UPDATE account
+SET balance = balance + 100
+WHERE account_id = 1;
+```
+
+An atomic update prevents the classic lost-update problem for increments. You may not need `SERIALIZABLE` for this operation alone, although other account rules may require additional protection.
+
+Example C: Reserve the last available seat
+
+Two requests attempt to book the same final seat.
+
+Here you need strong concurrency protection. A conditional atomic update, a unique constraint, or appropriate locking may solve the problem without requiring every transaction in the application to use `SERIALIZABLE`.
+
+## 3. The important point: SERIALIZABLE is not always the best solution
+
+Suppose your business rule is:
+
+> At least one doctor must remain on call.
+
+You could use `SERIALIZABLE` for the transaction that checks the roster and changes a doctor's availability. That is a valid approach.
+
+Alternatively, you could lock a shared roster row before checking and updating the doctors. That coordinates the specific operations that need protection, rather than asking the database to enforce serializable execution across the entire transaction.
+
+Similarly, for a seat booking, you could use a database constraint or an atomic conditional update.
+
+The better solution depends on the invariant you need to protect and how the data is accessed.
+
+## 4. How should you decide?
+
+|Requirement|Typical starting point|
+|---|---|
+|Ordinary reads and writes|`READ COMMITTED`|
+|Prevent stale JPA entity updates|`@Version` optimistic locking|
+|Increment a counter or balance|Atomic SQL update|
+|Ensure a row exists only once|Unique constraint|
+|Protect a specific shared resource|Pessimistic lock or conditional update|
+|Enforce complex rules across multiple rows|`SERIALIZABLE` or carefully designed coordination|
+
+These are starting points, not universal prescriptions. For financial transactions, for example, atomic updates alone don't necessarily enforce every rule about overdrafts, transfers, or simultaneous withdrawals.
+
+## 5. One final misconception to avoid
+
+`SERIALIZABLE` does not mean the database executes every transaction completely one after another.
+
+It means the database ensures the successful concurrent execution is equivalent to some valid serial ordering. Transactions can still overlap in time, and the database may block or abort some of them to maintain that guarantee.
+
+My recommendation: Start with your database's usual isolation level, often `READ COMMITTED`, and explicitly protect the business rules that can be broken by concurrent requests. Use `SERIALIZABLE` when its stronger guarantees are needed and the performance trade-offs are acceptable.
+
+That gives you correctness without unnecessarily restricting concurrency across the entire application.
