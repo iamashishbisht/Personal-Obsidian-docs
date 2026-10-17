@@ -581,3 +581,12 @@ It means the database ensures the successful concurrent execution is equivalent 
 My recommendation: Start with your database's usual isolation level, often `READ COMMITTED`, and explicitly protect the business rules that can be broken by concurrent requests. Use `SERIALIZABLE` when its stronger guarantees are needed and the performance trade-offs are acceptable.
 
 That gives you correctness without unnecessarily restricting concurrency across the entire application.
+
+### How Databases Implement Isolation
+
+Databases use a few common techniques to enforce isolation:
+
+- **Locks** make one transaction wait when another transaction is changing the same data.
+- **MVCC** lets readers see a stable snapshot while writers create newer versions of rows.
+- **Range locks** protect a group of rows, such as "all seats in this row" or "all products below this price."
+- **Conflict detection** lets the database stop a transaction when it cannot safely run alongside another one.
